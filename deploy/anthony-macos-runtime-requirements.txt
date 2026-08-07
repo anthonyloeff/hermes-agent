@@ -1,0 +1,5 @@
+# Local runtime overlay for Anthony's macOS Hermes deployment.
+# Install only after the locked Hermes extras have been synchronized.
+hindsight-all==0.8.3
+hindsight-embed==0.8.3
+sentence-transformers==5.6.0

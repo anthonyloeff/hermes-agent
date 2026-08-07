@@ -1282,6 +1282,7 @@ class TelegramAdapter(BasePlatformAdapter):
             user_id=user_id,
             user_name=user_name,
             thread_id=thread_id,
+            is_bot=bool(getattr(user, "is_bot", False)) if user else False,
         )
 
     def _source_from_reaction_for_auth(self, update):
@@ -10802,6 +10803,10 @@ def _apply_yaml_config(yaml_cfg: dict, telegram_cfg: dict) -> dict | None:
         # extras seed intentionally omitted (shared-key loop bridges allowed_topics).
         if not _skip_env_bridge and not os.getenv("TELEGRAM_ALLOWED_TOPICS"):
             os.environ["TELEGRAM_ALLOWED_TOPICS"] = str(allowed_topics)
+    if "group_topics" in telegram_cfg:
+        extras.setdefault("group_topics", telegram_cfg["group_topics"])
+    if "dm_topics" in telegram_cfg:
+        extras.setdefault("dm_topics", telegram_cfg["dm_topics"])
     ignored_threads = telegram_cfg.get("ignored_threads")
     if ignored_threads is not None:
         extras.setdefault("ignored_threads", ignored_threads)

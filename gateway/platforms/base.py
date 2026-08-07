@@ -25,6 +25,11 @@ from urllib.parse import urlsplit
 
 from utils import normalize_proxy_url
 
+try:
+    from agent_daily_greeting import maybe_prepend_daily_greeting
+except ImportError:
+    maybe_prepend_daily_greeting = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -6497,6 +6502,23 @@ class BasePlatformAdapter(ABC):
                 # the current transport before sending it.
                 if text_content and not _tts_caption_delivered:
                     delivery_adapter = self._final_delivery_adapter(event.source)
+                    if maybe_prepend_daily_greeting:
+                        try:
+                            from hermes_cli.config import load_config_readonly
+
+                            text_content = maybe_prepend_daily_greeting(
+                                text_content,
+                                platform=_platform_name(delivery_adapter.platform),
+                                chat_id=event.source.chat_id,
+                                thread_id=getattr(event.source, "thread_id", None),
+                                config=load_config_readonly(),
+                            )
+                        except Exception as greeting_err:
+                            logger.warning(
+                                "[%s] Daily greeting failed: %s",
+                                delivery_adapter.name,
+                                greeting_err,
+                            )
                     logger.info(
                         "[%s] Sending response (%d chars) to %s",
                         delivery_adapter.name,

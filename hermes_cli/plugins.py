@@ -3961,7 +3961,14 @@ class PluginManager:
             # path actually asks for that platform. Every platform Hermes ships
             # remains available out of the box — it just loads on first use.
             if manifest.source == "bundled" and manifest.kind == "platform":
-                self._register_deferred_platform(manifest)
+                # Hybrid platform plugins also expose model tools. Those tools
+                # must exist during ordinary CLI/toolset validation, before a
+                # gateway ever resolves the inbound platform adapter. Keep
+                # platform-only plugins lazy, but eagerly load hybrids.
+                if manifest.provides_tools:
+                    self._load_plugin(manifest)
+                else:
+                    self._register_deferred_platform(manifest)
                 continue
 
             # Everything else (standalone, user-installed backends,

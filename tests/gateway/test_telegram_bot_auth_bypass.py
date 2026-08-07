@@ -127,3 +127,33 @@ def _capture_build_source_is_bot(is_bot: bool):
     return captured.get("is_bot")
 
 
+def test_telegram_adapter_propagates_is_bot_true():
+    assert _capture_build_source_is_bot(True) is True
+
+
+def test_telegram_adapter_propagates_is_bot_false():
+    assert _capture_build_source_is_bot(False) is False
+
+
+def test_telegram_early_auth_source_propagates_is_bot_true():
+    """The intake prefilter must preserve bot identity for ALLOW_BOTS."""
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+
+    adapter = object.__new__(TelegramAdapter)
+    source = adapter._source_from_message_for_auth(
+        _build_telegram_message(is_bot=True)
+    )
+
+    assert source.is_bot is True
+
+
+def test_telegram_early_auth_source_propagates_is_bot_false():
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+
+    adapter = object.__new__(TelegramAdapter)
+    source = adapter._source_from_message_for_auth(
+        _build_telegram_message(is_bot=False)
+    )
+
+    assert source.is_bot is False
+
