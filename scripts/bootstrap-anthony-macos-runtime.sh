@@ -38,15 +38,18 @@ import sqlite3
 
 expected = {
     "agent-client-protocol": "0.9.0",
-    "hindsight-all": "0.8.3",
-    "hindsight-embed": "0.8.3",
     "hindsight-client": "0.6.1",
     "mcp": "2.0.0",
-    "sentence-transformers": "5.6.0",
 }
 actual = {name: metadata.version(name) for name in expected}
 if actual != expected:
     raise SystemExit(f"Runtime dependency mismatch: {actual}")
+for forbidden in ("hindsight-all", "hindsight-api-slim", "hindsight-embed", "fastmcp"):
+    try:
+        version = metadata.version(forbidden)
+    except metadata.PackageNotFoundError:
+        continue
+    raise SystemExit(f"Conflicting embedded Hindsight package in Hermes runtime: {forbidden}=={version}")
 if tuple(map(int, sqlite3.sqlite_version.split("."))) < (3, 51, 3):
     raise SystemExit(f"Runtime SQLite is not current enough: {sqlite3.sqlite_version}")
 print({"runtime_dependencies": actual, "sqlite": sqlite3.sqlite_version})

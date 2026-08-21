@@ -1,0 +1,6 @@
+# Isolated local Hindsight daemon runtime for Anthony's macOS deployment.
+hindsight-all==0.8.3
+hindsight-client==0.6.1
+hindsight-embed==0.8.3
+sentence-transformers==5.6.0
+mcp==1.28.1
