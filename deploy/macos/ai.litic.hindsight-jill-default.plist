@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.litic.hindsight-jill-default</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/macmini/.hermes/runtime/hermes-v0.20.4/scripts/ensure-anthony-hindsight-daemon.sh</string><string>jill-default</string></array>
+  <key>WorkingDirectory</key><string>/Users/macmini</string>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>120</integer>
+  <key>StandardOutPath</key><string>/Users/macmini/.hermes/logs/hindsight-supervisors/jill-default.log</string>
+  <key>StandardErrorPath</key><string>/Users/macmini/.hermes/logs/hindsight-supervisors/jill-default.error.log</string>
+</dict>
+</plist>
