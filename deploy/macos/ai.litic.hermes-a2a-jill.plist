@@ -5,20 +5,20 @@
   <key>Label</key><string>ai.litic.hermes-a2a-jill</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/macmini/.hermes/staging/hermes-a2a-005421d88/.venv-runtime/bin/hermes</string>
+    <string>/Users/macmini/.hermes/runtime/hermes-v0.20.4/.venv-runtime/bin/hermes</string>
     <string>gateway</string><string>run</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/macmini/.hermes/staging/hermes-a2a-005421d88</string>
+  <key>WorkingDirectory</key><string>/Users/macmini/.hermes/runtime/hermes-v0.20.4</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HERMES_HOME</key><string>/Users/macmini/.hermes/staging/a2a-pilot/jill</string>
+    <key>HERMES_HOME</key><string>/Users/macmini/.hermes/runtime/a2a-pilot/jill</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>PYTHONUNBUFFERED</key><string>1</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>/Users/macmini/.hermes/staging/a2a-pilot/jill/logs/a2a-service.log</string>
-  <key>StandardErrorPath</key><string>/Users/macmini/.hermes/staging/a2a-pilot/jill/logs/a2a-service.err.log</string>
+  <key>StandardOutPath</key><string>/Users/macmini/.hermes/runtime/a2a-pilot/jill/logs/a2a-service.log</string>
+  <key>StandardErrorPath</key><string>/Users/macmini/.hermes/runtime/a2a-pilot/jill/logs/a2a-service.err.log</string>
 </dict>
 </plist>
