@@ -82,10 +82,39 @@ PY
   fi
 
   launchctl bootout "system/$label" 2>/dev/null || true
-  if ! launchctl bootstrap system "$plist"; then
+  # launchd unload completion is asynchronous on macOS. Wait until the job is
+  # genuinely absent before bootstrapping the rewritten plist.
+  absent=0
+  for _ in $(seq 1 30); do
+    if ! launchctl print "system/$label" >/dev/null 2>&1; then
+      absent=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$absent" -ne 1 ]]; then
+    printf 'Service did not unload in time: %s. Restoring old plist.\n' "$label" >&2
+    cp -p "$backup" "$plist"
+    exit 72
+  fi
+
+  started=0
+  for _ in 1 2 3 4 5; do
+    if launchctl bootstrap system "$plist"; then
+      started=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$started" -ne 1 ]]; then
     printf 'Bootstrap failed for %s, restoring old plist.\n' "$label" >&2
     cp -p "$backup" "$plist"
-    launchctl bootstrap system "$plist" || true
+    for _ in 1 2 3 4 5; do
+      if launchctl bootstrap system "$plist"; then
+        break
+      fi
+      sleep 2
+    done
     exit 70
   fi
   launchctl enable "system/$label"
