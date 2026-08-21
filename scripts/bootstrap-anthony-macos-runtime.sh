@@ -41,7 +41,7 @@ expected = {
     "hindsight-all": "0.8.3",
     "hindsight-embed": "0.8.3",
     "hindsight-client": "0.6.1",
-    "mcp": "1.28.1",
+    "mcp": "2.0.0",
     "sentence-transformers": "5.6.0",
 }
 actual = {name: metadata.version(name) for name in expected}
