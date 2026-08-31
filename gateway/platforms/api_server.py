@@ -1222,6 +1222,56 @@ def _redact_api_error_text(value: Any, *, limit: int | None = None) -> str:
     return redacted
 
 
+_SESSION_COPY_MEDIA_LINE_RE = re.compile(r"(?im)^\s*MEDIA\s*:\s*\S+[^\r\n]*$")
+_SESSION_COPY_LOCAL_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:/Users/[^\s\]\[(){}<>\"']+|/tmp/[^\s\]\[(){}<>\"']+|[A-Za-z]:\\[^\s\]\[(){}<>\"']+)"
+)
+
+
+def _session_copy_text(content: Any) -> str:
+    """Return user-visible text without secrets, local paths, or binary payloads."""
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"text", "input_text", "output_text"}:
+                value = part.get("text")
+                if isinstance(value, str):
+                    parts.append(value)
+            elif part.get("type") in {"image_url", "input_image"}:
+                parts.append("[Eerdere afbeelding uit bronchat]")
+        text = "\n".join(parts)
+    else:
+        text = ""
+    text = redact_sensitive_text(text, force=True)
+    text = _SESSION_COPY_MEDIA_LINE_RE.sub("[Eerdere bijlage uit bronchat]", text)
+    text = _SESSION_COPY_LOCAL_PATH_RE.sub("[lokaal pad verwijderd]", text)
+    return text.strip()
+
+
+def _project_session_copy_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Project a transcript to alternating visible user/assistant conversation."""
+    projected: List[Dict[str, Any]] = []
+    for message in messages:
+        role = str(message.get("role") or "")
+        if role not in {"user", "assistant"}:
+            continue
+        text = _session_copy_text(message.get("content"))
+        if not text:
+            continue
+        if projected and projected[-1]["role"] == role:
+            projected[-1]["content"] = f"{projected[-1]['content']}\n\n{text}"
+            continue
+        item: Dict[str, Any] = {"role": role, "content": text}
+        if message.get("timestamp") is not None:
+            item["timestamp"] = message.get("timestamp")
+        projected.append(item)
+    return projected
+
+
 def _openai_error(message: str, err_type: str = "invalid_request_error", param: str = None, code: str = None) -> Dict[str, Any]:
     """OpenAI-style error envelope."""
     return {
@@ -4574,19 +4624,33 @@ class APIServerAdapter(BasePlatformAdapter):
         if await asyncio.to_thread(db.get_session, fork_id):
             return web.json_response(_openai_error(f"Session already exists: {fork_id}", code="session_exists"), status=409)
 
-        # Match the CLI /branch semantics: mark the original as branched, then
-        # create a child session that carries the transcript forward. This uses
-        # SessionDB's native parent_session_id/end_reason visibility model rather
-        # than inventing a parallel fork store.
-        await asyncio.to_thread(db.end_session, source_id, "branched")
+        preserve_source = _coerce_request_bool(body.get("preserve_source"), default=False)
+        projection = str(body.get("projection") or "full").strip().lower()
+        if projection not in {"full", "conversation"}:
+            return web.json_response(
+                _openai_error("Invalid session projection", code="invalid_projection"),
+                status=400,
+            )
+        copy_system_prompt = _coerce_request_bool(
+            body.get("copy_system_prompt"),
+            default=True,
+        )
+
+        # Default behavior matches CLI /branch. Preserve-source copies are for
+        # cross-client imports: the source remains untouched and the child gets
+        # a privacy-projected transcript suitable for a different UI surface.
+        if not preserve_source:
+            await asyncio.to_thread(db.end_session, source_id, "branched")
         await asyncio.to_thread(db.create_session,
             fork_id,
             "api_server",
             model=source.get("model"),
-            system_prompt=source.get("system_prompt"),
+            system_prompt=(source.get("system_prompt") if copy_system_prompt else None),
             parent_session_id=source_id,
         )
         messages = await asyncio.to_thread(db.get_messages, source_id)
+        if projection == "conversation":
+            messages = _project_session_copy_messages(messages)
         await asyncio.to_thread(db.replace_messages, fork_id, messages)
         title = body.get("title")
         if title is None:
