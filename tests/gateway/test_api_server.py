@@ -2751,6 +2751,125 @@ class TestSessionDbOffEventLoop:
 
 
 # ---------------------------------------------------------------------------
+# Preserve-source session copy
+# ---------------------------------------------------------------------------
+
+class TestPreserveSourceSessionCopy:
+    @pytest.mark.asyncio
+    async def test_safe_conversation_copy_keeps_source_open_and_projects_messages(
+        self, auth_adapter
+    ):
+        source_id = "telegram-source"
+        copied_messages = []
+        calls = {"end": 0, "create": None, "title": None}
+        sessions = {
+            source_id: {
+                "id": source_id,
+                "source": "telegram",
+                "model": "test-model",
+                "system_prompt": "Telegram-only system prompt",
+                "title": "Jill en Anthony",
+                "ended_at": None,
+                "end_reason": None,
+            }
+        }
+        messages = [
+            {"role": "system", "content": "verborgen systeemtekst", "timestamp": 1},
+            {"role": "user", "content": "Open /Users/macmini/privé/dossier.txt", "timestamp": 2},
+            {
+                "role": "assistant",
+                "content": "Token sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa en klaar.",
+                "tool_calls": [{"function": {"name": "terminal", "arguments": "geheim"}}],
+                "reasoning": "verborgen redenering",
+                "timestamp": 3,
+            },
+            {"role": "tool", "content": "niet-publiek toolresultaat", "timestamp": 4},
+            {"role": "assistant", "content": "MEDIA:/tmp/geheim-rapport.pdf", "timestamp": 5},
+        ]
+
+        class FakeDB:
+            def get_session(self, session_id):
+                return sessions.get(session_id)
+
+            def end_session(self, session_id, reason):
+                calls["end"] += 1
+                sessions[session_id]["ended_at"] = 10
+                sessions[session_id]["end_reason"] = reason
+
+            def create_session(self, session_id, source, model=None, system_prompt=None, parent_session_id=None):
+                calls["create"] = {
+                    "id": session_id,
+                    "source": source,
+                    "model": model,
+                    "system_prompt": system_prompt,
+                    "parent_session_id": parent_session_id,
+                }
+                sessions[session_id] = {
+                    "id": session_id,
+                    "source": source,
+                    "model": model,
+                    "system_prompt": system_prompt,
+                    "parent_session_id": parent_session_id,
+                    "title": None,
+                }
+
+            def get_messages(self, session_id):
+                assert session_id == source_id
+                return [dict(message) for message in messages]
+
+            def replace_messages(self, session_id, projected):
+                assert session_id == "pwa-jill-copy"
+                copied_messages.extend(projected)
+
+            def set_session_title(self, session_id, title):
+                calls["title"] = (session_id, title)
+                sessions[session_id]["title"] = title
+
+            def get_next_title_in_lineage(self, base):
+                return f"{base} kopie"
+
+        fake_db = FakeDB()
+        auth_adapter._ensure_session_db_async = AsyncMock(return_value=fake_db)
+        app = _create_app(auth_adapter)
+        app.router.add_post(
+            "/api/sessions/{session_id}/fork",
+            auth_adapter._handle_fork_session,
+        )
+
+        async with TestClient(TestServer(app)) as cli:
+            response = await cli.post(
+                f"/api/sessions/{source_id}/fork",
+                json={
+                    "id": "pwa-jill-copy",
+                    "title": "Telegram, Jill en Anthony",
+                    "preserve_source": True,
+                    "projection": "conversation",
+                    "copy_system_prompt": False,
+                },
+                headers={"Authorization": "Bearer sk-secret"},
+            )
+            payload = await response.json()
+
+        assert response.status == 201
+        assert payload["session"]["id"] == "pwa-jill-copy"
+        assert calls["end"] == 0
+        assert sessions[source_id]["ended_at"] is None
+        assert sessions[source_id]["end_reason"] is None
+        assert calls["create"]["system_prompt"] is None
+        assert calls["create"]["parent_session_id"] == source_id
+        assert [message["role"] for message in copied_messages] == ["user", "assistant"]
+        serialized = json.dumps(copied_messages, ensure_ascii=False)
+        assert "verborgen systeemtekst" not in serialized
+        assert "niet-publiek toolresultaat" not in serialized
+        assert "verborgen redenering" not in serialized
+        assert "tool_calls" not in serialized
+        assert "/Users/macmini" not in serialized
+        assert "/tmp/geheim-rapport.pdf" not in serialized
+        assert "sk-aaaaaaaa" not in serialized
+        assert calls["title"] == ("pwa-jill-copy", "Telegram, Jill en Anthony")
+
+
+# ---------------------------------------------------------------------------
 # _api_key_passes_startup_guard — fail-closed on an unverifiable key
 # ---------------------------------------------------------------------------
 
