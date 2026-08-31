@@ -27,6 +27,12 @@ from gateway.platforms.api_server import (
     security_headers_middleware,
 )
 from tools import approval as approval_mod
+from tools import clarify_gateway as clarify_mod
+from toolsets import TOOLSETS
+
+
+def test_api_server_toolset_exposes_runs_clarify():
+    assert "clarify" in TOOLSETS["hermes-api-server"]["tools"]
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +99,7 @@ def _create_runs_app(adapter: APIServerAdapter) -> web.Application:
     app.router.add_get("/v1/runs/{run_id}", adapter._handle_get_run)
     app.router.add_get("/v1/runs/{run_id}/events", adapter._handle_run_events)
     app.router.add_post("/v1/runs/{run_id}/approval", adapter._handle_run_approval)
+    app.router.add_post("/v1/runs/{run_id}/clarify", adapter._handle_run_clarify)
     app.router.add_post("/v1/runs/{run_id}/steer", adapter._handle_steer_run)
     app.router.add_post("/v1/runs/{run_id}/stop", adapter._handle_stop_run)
     return app
@@ -381,6 +388,84 @@ class TestRunEvents:
                 assert "run.completed" in body
                 assert "Hello!" in body
 
+    @pytest.mark.asyncio
+    async def test_clarify_event_resumes_same_run_after_valid_response(self, auth_adapter):
+        app = _create_runs_app(auth_adapter)
+        callback_result = {}
+        callback_started = threading.Event()
+
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_create_agent") as mock_create:
+                mock_agent = MagicMock()
+                mock_agent.session_prompt_tokens = 0
+                mock_agent.session_completion_tokens = 0
+                mock_agent.session_total_tokens = 0
+
+                def _run_with_clarify(user_message=None, conversation_history=None, task_id=None):
+                    callback_started.set()
+                    callback_result["answer"] = mock_agent.clarify_callback(
+                        "Welke route wil je?",
+                        ["Veilige route (Recommended)", "Snelle route"],
+                        multi_select=False,
+                    )
+                    return {"final_response": f"Gekozen: {callback_result['answer']}"}
+
+                mock_agent.run_conversation.side_effect = _run_with_clarify
+                mock_create.return_value = mock_agent
+
+                started = await cli.post(
+                    "/v1/runs",
+                    json={"input": "vraag om een keuze", "session_id": "clarify-session"},
+                    headers={"Authorization": "Bearer sk-secret"},
+                )
+                assert started.status == 202
+                run_id = (await started.json())["run_id"]
+                callback_started.wait(timeout=3.0)
+
+                event = None
+                for _ in range(40):
+                    queue = auth_adapter._run_streams.get(run_id)
+                    if queue is not None and not queue.empty():
+                        candidate = queue.get_nowait()
+                        if candidate and candidate.get("event") == "clarify.request":
+                            event = candidate
+                            break
+                    await asyncio.sleep(0.05)
+
+                assert event is not None
+                assert event["question"] == "Welke route wil je?"
+                assert event["choices"] == ["Veilige route (Recommended)", "Snelle route"]
+                assert event["multi_select"] is False
+                clarify_id = event["clarify_id"]
+
+                status = await (await cli.get(
+                    f"/v1/runs/{run_id}",
+                    headers={"Authorization": "Bearer sk-secret"},
+                )).json()
+                assert status["status"] == "waiting_for_clarify"
+
+                answered = await cli.post(
+                    f"/v1/runs/{run_id}/clarify",
+                    json={"clarify_id": clarify_id, "response": "Veilige route"},
+                    headers={"Authorization": "Bearer sk-secret"},
+                )
+                assert answered.status == 200
+                assert (await answered.json())["resolved"] is True
+
+                for _ in range(60):
+                    status = await (await cli.get(
+                        f"/v1/runs/{run_id}",
+                        headers={"Authorization": "Bearer sk-secret"},
+                    )).json()
+                    if status["status"] == "completed":
+                        break
+                    await asyncio.sleep(0.05)
+
+                assert status["status"] == "completed"
+                assert callback_result["answer"] == "Veilige route"
+                assert status["output"] == "Gekozen: Veilige route"
+                assert run_id not in auth_adapter._run_clarify_ids
+                assert clarify_mod.has_pending(run_id) is False
 
     @pytest.mark.asyncio
     async def test_approval_resolve_all_is_scoped_to_target_run(self, auth_adapter):
