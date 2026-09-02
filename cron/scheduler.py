@@ -24,6 +24,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 
@@ -50,6 +53,7 @@ from hermes_cli.config import (
     _expand_env_vars,
     cron_model_drift_axes,
     cron_model_drift_guard_enabled,
+    get_env_value,
     load_config,
     resolve_cron_model_drift_defaults,
 )
@@ -2498,6 +2502,14 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
     if deliver_value == "local":
         return None
 
+    if is_pwa_delivery_token(deliver_value):
+        return {
+            "platform": PWA_DELIVERY_PLATFORM,
+            "chat_id": "self",
+            "thread_id": None,
+            "_resolved_from": "explicit",
+        }
+
     # bot-chat[:<profile>] — checked before the generic platform:chat_id
     # split below so the profile-name argument is never misparsed as a
     # chat_id on an unknown platform.
@@ -2765,6 +2777,15 @@ _ROUTING_TOKENS = frozenset({"all"})
 # ``all`` routing token: ``all`` fans out to messaging home channels, and a
 # bot-chat delivery costs a full agent turn.
 BOT_CHAT_PLATFORM = "bot-chat"
+PWA_DELIVERY_PLATFORM = "pwa"
+
+
+def is_pwa_delivery_token(part: str) -> bool:
+    """Whether a token routes into this profile's private PWA inbox."""
+    return (part or "").strip().lower() in {
+        PWA_DELIVERY_PLATFORM,
+        f"{PWA_DELIVERY_PLATFORM}:self",
+    }
 
 
 def parse_bot_chat_deliver_token(part: str) -> Optional[str]:
@@ -3060,6 +3081,69 @@ def _is_channel_dm_topic(
     return is_channel
 
 
+def _deliver_to_pwa(job: dict, content: str) -> Optional[str]:
+    """Deliver one cron result to this profile's loopback PWA inbox."""
+    try:
+        cfg = load_config()
+        pwa_cfg = (cfg.get("cron", {}) or {}).get("pwa_delivery", {}) or {}
+    except Exception as exc:
+        return f"PWA delivery config could not be loaded: {exc}"
+    if not pwa_cfg.get("enabled", False):
+        return "PWA delivery is disabled in cron.pwa_delivery.enabled"
+    base_url = str(pwa_cfg.get("url") or "").strip().rstrip("/")
+    try:
+        parsed = urllib.parse.urlparse(base_url)
+    except Exception:
+        parsed = None
+    if (
+        parsed is None
+        or parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or not parsed.port
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return "PWA delivery URL must be an explicit loopback HTTP origin with a port"
+    key = str(get_env_value("AGENT_PWA_CRON_INGEST_KEY") or "").strip()
+    if len(key) < 32:
+        return "PWA delivery credential is missing or too short"
+    execution_id = str(
+        job.get("_delivery_execution_id")
+        or job.get("execution_id")
+        or f"manual-{uuid.uuid4().hex}"
+    )
+    payload = json.dumps(
+        {
+            "jobId": str(job.get("id") or "")[:80],
+            "executionId": execution_id[:128],
+            "jobName": str(job.get("name") or job.get("id") or "Cronjob")[:120],
+            "content": content,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url}/api/automation/deliver",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Hermes-Cron-PWA/1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            result = json.loads(response.read(65536).decode("utf-8"))
+        if not result.get("accepted"):
+            return "PWA delivery endpoint did not acknowledge the cron result"
+        return None
+    except urllib.error.HTTPError as exc:
+        return f"PWA delivery returned HTTP {exc.code}"
+    except Exception as exc:
+        return f"PWA delivery failed: {type(exc).__name__}"
+
+
 def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Optional[str]:
     """
     Deliver job output to the configured target(s) (origin chat, specific platform, etc.).
@@ -3181,6 +3265,12 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
         platform_name = target["platform"]
         chat_id = target["chat_id"]
         thread_id = target.get("thread_id")
+
+        if platform_name == PWA_DELIVERY_PLATFORM:
+            pwa_error = _deliver_to_pwa(job, content)
+            if pwa_error:
+                delivery_errors.append(pwa_error)
+            continue
 
         # bot-chat targets don't ride a gateway adapter: the output becomes a
         # real inbound turn in the target profile's canonical Bot Chat via the
@@ -7431,7 +7521,7 @@ def _run_one_job_body(
                             raise _FireClaimLostDuringSideEffect
                         delivery_attempted = True
                         delivery_error = _deliver_result(
-                            job,
+                            {**job, "_delivery_execution_id": execution_id},
                             deliver_content,
                             adapters=adapters,
                             loop=loop,
@@ -7594,7 +7684,7 @@ def _run_one_job_body(
                 try:
                     delivery_attempted = True
                     delivery_error = _deliver_result(
-                        job,
+                        {**job, "_delivery_execution_id": execution_id},
                         # Composed exactly like the normal failure delivery above.
                         # mark_job_run below records THIS run in failure_streak
                         # whichever layer failed, so a job that fails before the
