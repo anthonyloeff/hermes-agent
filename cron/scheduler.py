@@ -47,6 +47,11 @@ from typing import Any, Callable, List, Optional, Protocol
 # the module) fail with ModuleNotFoundError for hermes_time et al.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+try:
+    from agent_daily_greeting import maybe_prepend_daily_greeting
+except ImportError:
+    maybe_prepend_daily_greeting = None
+
 from hermes_constants import get_hermes_home
 from hermes_cli._subprocess_compat import windows_hide_flags
 from hermes_cli.config import (
@@ -3538,6 +3543,23 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 thread_id = new_thread_id
                 opened_thread_id = new_thread_id
 
+        text_to_send = cleaned_delivery_content.strip()
+        if maybe_prepend_daily_greeting and user_cfg:
+            try:
+                text_to_send = maybe_prepend_daily_greeting(
+                    text_to_send,
+                    platform=platform_name,
+                    chat_id=chat_id,
+                    thread_id=thread_id,
+                    config=user_cfg,
+                )
+            except Exception as greeting_err:
+                logger.warning(
+                    "Job '%s': Daily greeting failed: %s",
+                    job["id"],
+                    greeting_err,
+                )
+
         if live_adapter_ready:
             # Telegram topic routing (#22773, regression fixed #52060): a
             # ``telegram:<positive_chat_id>:<numeric_thread_id>`` cron target is
@@ -3615,7 +3637,6 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 # standalone cron path lacked this, so DM-topic cron deliveries
                 # landed in the General topic or were rejected by Bot API 10.0
                 # (#22773).
-                text_to_send = cleaned_delivery_content.strip()
                 adapter_ok = True
                 timed_out = False
                 delivered_message_id = None
@@ -3916,7 +3937,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 delivery_errors.extend(target_errors)
                 continue
             # Standalone path: run the async send in a fresh event loop (safe from any thread)
-            coro = _send_to_platform(platform, pconfig, chat_id, cleaned_delivery_content, thread_id=thread_id, media_files=media_files)
+            coro = _send_to_platform(platform, pconfig, chat_id, text_to_send, thread_id=thread_id, media_files=media_files)
             try:
                 result = asyncio.run(coro)
             except RuntimeError as run_err:
@@ -3945,7 +3966,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 try:
                     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                     try:
-                        future = pool.submit(asyncio.run, _send_to_platform(platform, pconfig, chat_id, cleaned_delivery_content, thread_id=thread_id, media_files=media_files))
+                        future = pool.submit(asyncio.run, _send_to_platform(platform, pconfig, chat_id, text_to_send, thread_id=thread_id, media_files=media_files))
                         result = future.result(timeout=30)
                     finally:
                         pool.shutdown(wait=False)

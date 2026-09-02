@@ -1,0 +1,5 @@
+# Local runtime overlay for Anthony's macOS Hermes deployment.
+#
+# Hindsight local-embedded packages intentionally live in a separate venv.
+# Hermes v0.21.0 requires MCP 2.0, while Hindsight 0.8.3/FastMCP requires
+# MCP <2. Keeping the daemon runtime separate prevents resolver downgrades.

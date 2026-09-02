@@ -442,7 +442,7 @@ TOOLSETS = {
     },
 
     "hermes-api-server": {
-        "description": "OpenAI-compatible API server — full agent tools via HTTP, including Runs-based clarify interactions",
+        "description": "OpenAI-compatible API server: full agent tools via HTTP, including Runs-based clarify interactions",
         "tools": [
             # Web
             "web_search", "web_extract",

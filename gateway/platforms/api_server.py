@@ -18,7 +18,7 @@ Exposes an HTTP server with endpoints:
 - GET  /v1/runs/{run_id}           — retrieve current run status
 - GET  /v1/runs/{run_id}/events    — SSE stream of structured lifecycle events
 - POST /v1/runs/{run_id}/approval — resolve a pending run approval
-- POST /v1/runs/{run_id}/clarify  — resolve a pending clarify interaction
+- POST /v1/runs/{run_id}/clarify: resolve a pending clarify interaction
 - POST /v1/runs/{run_id}/steer      — inject guidance into a running agent
 - POST /v1/runs/{run_id}/stop       — interrupt a running agent
 - GET  /health                     — health check
@@ -7719,7 +7719,7 @@ class APIServerAdapter(BasePlatformAdapter):
         )
 
     async def _handle_run_clarify(self, request: "web.Request") -> "web.Response":
-        """POST /v1/runs/{run_id}/clarify — resolve a pending clarify prompt."""
+        """POST /v1/runs/{run_id}/clarify: resolve a pending clarify prompt."""
         return await _api_runs._handle_run_clarify(
             self,
             request,

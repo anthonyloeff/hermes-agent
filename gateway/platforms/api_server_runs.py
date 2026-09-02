@@ -1355,7 +1355,7 @@ async def _handle_run_clarify(
     *,
     _api_server,
 ) -> "web.Response":
-    """POST /v1/runs/{run_id}/clarify — resolve one pending clarify prompt."""
+    """POST /v1/runs/{run_id}/clarify: resolve one pending clarify prompt."""
     _openai_error = _api_server._openai_error
 
     auth_err = self._check_auth(request)
