@@ -37,6 +37,29 @@ def test_pwa_tokens_are_self_scoped_and_composable(monkeypatch):
     assert scheduler.is_pwa_delivery_token("pwa:kelly") is False
 
 
+def test_pwa_tokens_bypass_gateway_preflight(monkeypatch):
+    def fail_if_gateway_config_loads():
+        raise AssertionError("PWA delivery must not require gateway credentials")
+
+    monkeypatch.setattr(
+        "gateway.config.load_gateway_config",
+        fail_if_gateway_config_loads,
+    )
+
+    assert scheduler._preflight_check_delivery(
+        {"deliver": "origin,pwa:self"}
+    ) is None
+    assert scheduler._preflight_check_delivery(
+        {"deliver": "pwa:self"}
+    ) is None
+
+    reason = scheduler._preflight_check_delivery(
+        {"deliver": "pwa:kelly"}
+    )
+    assert reason is not None
+    assert "not a known cron delivery target" in reason
+
+
 def test_pwa_delivery_posts_acknowledged_redacted_cron_result(monkeypatch):
     received = {}
 

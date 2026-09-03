@@ -5329,6 +5329,12 @@ def _preflight_check_delivery(job: dict) -> Optional[str]:
         part = part.strip()
         if not part or part.lower() in {"local", "origin", "all"}:
             continue
+        # PWA targets are delivered directly to this profile's loopback HTTP
+        # inbox. They do not use a gateway adapter or gateway credentials.
+        # Delivery-time validation still enforces the profile-local config,
+        # loopback-only URL and dedicated ingest credential.
+        if is_pwa_delivery_token(part):
+            continue
         # bot-chat targets need no gateway credentials — they deliver via a
         # local chat subprocess. Unknown-profile failures surface per run in
         # last_delivery_error (and are validated at create time).
