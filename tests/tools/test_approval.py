@@ -741,6 +741,22 @@ class TestWebhookApprovalExclusion:
             monkeypatch.setenv("HERMES_SESSION_PLATFORM", platform)
             assert _is_gateway_approval_context() is False, platform
 
+    def test_api_server_run_with_registered_notify_returns_true(self, monkeypatch):
+        """Interactive Runs API sessions use their run-scoped approval callback."""
+        from tools import approval as approval_mod
+
+        session_key = "test-interactive-api-run"
+        monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+        monkeypatch.delenv("HERMES_GATEWAY_SESSION", raising=False)
+        monkeypatch.setenv("HERMES_SESSION_PLATFORM", "api_server")
+        token = approval_mod.set_current_session_key(session_key)
+        approval_mod.register_gateway_notify(session_key, lambda _data: None)
+        try:
+            assert approval_mod._is_gateway_approval_context() is True
+        finally:
+            approval_mod.unregister_gateway_notify(session_key)
+            approval_mod.reset_current_session_key(token)
+
     def test_non_webhook_gateway_session_returns_true(self, monkeypatch):
         """Non-webhook gateway sessions (e.g. Telegram) are still gateway contexts."""
         from tools.approval import _is_gateway_approval_context

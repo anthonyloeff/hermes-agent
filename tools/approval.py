@@ -291,6 +291,21 @@ def _is_unattended_platform_approval_context() -> bool:
     return _get_session_platform() in _UNATTENDED_APPROVAL_PLATFORMS
 
 
+def _has_registered_gateway_notify() -> bool:
+    """Return whether this session has an internal interactive approval sink."""
+    session_key = get_current_session_key("")
+    if not session_key:
+        return False
+    try:
+        with _lock:
+            return callable(_gateway_notify_cbs.get(session_key))
+    except NameError:
+        # The approval registry is defined later in this module. This guard is
+        # defensive for unusual import-time calls; normal runtime calls occur
+        # after module initialization has completed.
+        return False
+
+
 def _is_single_query_approval_context() -> bool:
     """True when the current approval decision is from a single-query (-q) session.
 
@@ -331,8 +346,9 @@ def _is_gateway_approval_context() -> bool:
     with no listener and block the job indefinitely.
 
     Unattended programmatic platforms (webhook, msgraph_webhook, api_server)
-    are excluded for the same reason: those adapters have no
-    ``send_exec_approval`` and no way to receive ``/approve`` replies.
+    are excluded unless an API Server run has explicitly registered its
+    run-scoped interactive approval sink. Ordinary API calls still have no
+    ``send_exec_approval`` or reply surface and remain fail-closed.
     Submitting a pending approval there blocks the session for the full
     approval timeout (60-300 s) with no human who can resolve it (#37284,
     #87509). Their dangerous-command handling is governed by
@@ -341,7 +357,10 @@ def _is_gateway_approval_context() -> bool:
     if _is_cron_approval_context():
         return False
     if _is_unattended_platform_approval_context():
-        return False
+        return (
+            _get_session_platform() == "api_server"
+            and _has_registered_gateway_notify()
+        )
     if env_var_enabled("HERMES_GATEWAY_SESSION"):
         return True
     return bool(_get_session_platform())
@@ -2495,9 +2514,13 @@ def _is_verification_artifact_cleanup(command: str) -> bool:
         return False
 
     operand = argv[2]
-    temp_dir = os.path.realpath(tempfile.gettempdir())
+    raw_temp_dir = os.path.abspath(tempfile.gettempdir())
+    temp_dir = os.path.realpath(raw_temp_dir)
     basename = os.path.basename(operand)
-    if operand != os.path.join(temp_dir, basename):
+    allowed_operand_dirs = {temp_dir}
+    if raw_temp_dir == "/tmp" and os.path.realpath("/tmp") == temp_dir:
+        allowed_operand_dirs.add(raw_temp_dir)
+    if not any(operand == os.path.join(directory, basename) for directory in allowed_operand_dirs):
         return False
 
     target = os.path.realpath(operand)
