@@ -4634,6 +4634,29 @@ class AIAgent:
         except Exception:
             pass
 
+    def release_ephemeral_resources(self) -> None:
+        """Release resources owned by a one-run agent without ending its session.
+
+        The Runs API creates a fresh AIAgent for every request.  Such agents are
+        not cached, so their LLM clients and per-agent memory provider must be
+        closed when the run finishes.  Do not invoke ``on_session_end`` here:
+        the durable conversation may continue in a later Runs API request.
+        Terminal/browser state and tracked background processes remain owned by
+        the session and are deliberately preserved by ``release_clients()``.
+        """
+        if getattr(self, "_ephemeral_resources_released", False):
+            return
+        self._ephemeral_resources_released = True
+        self.release_clients()
+        if not getattr(self, "_memory_provider_shutdown", False):
+            self._memory_provider_shutdown = True
+            manager = getattr(self, "_memory_manager", None)
+            if manager is not None:
+                try:
+                    manager.shutdown_all()
+                except Exception:
+                    pass
+
     def close(self) -> None:
         """Release all resources held by this agent instance.
 

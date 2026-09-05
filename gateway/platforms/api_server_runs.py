@@ -921,6 +921,14 @@ async def _handle_runs(
                                     reset_room_execution_policy(room_policy_token)
                                 except Exception:
                                     pass
+                            try:
+                                agent.release_ephemeral_resources()
+                            except Exception:
+                                logger.debug(
+                                    "Failed to release ephemeral resources for run=%s",
+                                    run_id,
+                                    exc_info=True,
+                                )
                     u = {
                         "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
                         "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,

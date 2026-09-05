@@ -179,6 +179,26 @@ class TestAgentCloseMethod:
 
             mock_cleanup_cua.assert_not_called()
 
+    def test_ephemeral_release_closes_memory_without_session_end(self):
+        """One-run agents close provider clients but keep durable session semantics."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("run_agent.AIAgent.__init__", return_value=None):
+            from run_agent import AIAgent
+            agent = AIAgent.__new__(AIAgent)
+            memory_manager = MagicMock()
+            setattr(agent, "_memory_manager", memory_manager)
+            setattr(agent, "_memory_provider_shutdown", False)
+            agent.release_clients = MagicMock()
+
+            agent.release_ephemeral_resources()
+            agent.release_ephemeral_resources()
+
+            agent.release_clients.assert_called_once_with()
+            memory_manager.shutdown_all.assert_called_once_with()
+            memory_manager.on_session_end.assert_not_called()
+            assert getattr(agent, "_memory_provider_shutdown") is True
+
     def test_close_propagates_to_children(self):
         """close() should call close() on all active child agents."""
         from unittest.mock import MagicMock, patch
