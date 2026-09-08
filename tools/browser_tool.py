@@ -6329,9 +6329,17 @@ _BROWSER_SCHEMA_MAP = {s["name"]: s for s in BROWSER_TOOL_SCHEMAS}
 
 def _browser_router_kw(kw: dict) -> dict:
     """Identity kwargs forwarded to the extension router wrapper."""
+    from gateway.session_context import get_session_env
+
+    # Registry session_id is the agent's mutable transcript id, not an explicit
+    # browser scope override. Keep the API's original registered lane through
+    # compression. Direct routed_browser_handler callers retain overrides.
     return {
         "task_id": kw.get("task_id"),
-        "session_id": kw.get("session_id"),
+        "session_id": (
+            get_session_env("HERMES_BROWSER_CONTROL_SESSION_ID", "")
+            or kw.get("session_id")
+        ),
     }
 
 

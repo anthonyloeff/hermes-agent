@@ -7304,6 +7304,7 @@ class APIServerAdapter(BasePlatformAdapter):
             session_key=session_key,
             session_id=session_id,
             browser_control_principal=browser_control_principal,
+            browser_control_session_id=session_id,
             browser_control_transport_family=browser_control_transport_family,
             async_delivery=False,
             cron_session="",
