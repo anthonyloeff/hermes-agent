@@ -7296,15 +7296,21 @@ class APIServerAdapter(BasePlatformAdapter):
         the turn — a session resumed later on a delivering interface, e.g. the
         CLI or a gateway platform, re-binds fresh and is NOT blocked).
         """
+        from gateway.browser_control_broker import browser_control_enabled
         from gateway.session_context import set_session_vars
 
+        # Capture controller-lane intent at run entry, independently of the
+        # broker's volatile registrations. Once bound, disabling the feature or
+        # resetting the broker must not send this run to an unrelated browser.
+        # Ordinary API runs started with extension control off remain legacy.
+        browser_session_id = session_id if browser_control_enabled() else ""
         return set_session_vars(
             platform="api_server",
             chat_id=chat_id,
             session_key=session_key,
             session_id=session_id,
             browser_control_principal=browser_control_principal,
-            browser_control_session_id=session_id,
+            browser_control_session_id=browser_session_id,
             browser_control_transport_family=browser_control_transport_family,
             async_delivery=False,
             cron_session="",

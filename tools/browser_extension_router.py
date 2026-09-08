@@ -8,18 +8,24 @@ browser backend.
 
 Routing contract (exercised by ``tests/tools/test_browser_extension_router.py``):
 
-- **Feature off ⇒ legacy, untouched.** When ``enabled`` is false the broker
-  is never touched and ``fallback()`` is called exactly once. This is the
-  default: ``browser.extension_control.enabled`` is false unless explicitly
-  configured, so every real browser action keeps its exact legacy path.
+- **Required API lane ⇒ no legacy fallback.** API runs started with extension
+  control enabled bind a stable browser session in server-owned context. That
+  binding survives transcript rotation, broker reset and a later flag change.
+  No caller kwarg can opt it out. Missing identity, imports, registration or
+  capabilities fail closed, including when the feature is subsequently off.
+  This is a global API routing opt-in, not PWA detection: generic API clients
+  also require a controller when the feature is enabled at run entry.
+
+- **Feature off without a required lane ⇒ legacy, untouched.** Ordinary API
+  runs started with the feature off and non-API callers retain their backend.
 
 - **No server-bound identity ⇒ legacy.** Generic Hermes callers keep the
   existing backend when no authenticated browser-controller identity is bound.
 
-- **Bound identity ⇒ authoritative extension lane.** Once the gateway binds a
-  browser-controller principal and transport family, missing/ambiguous scope,
-  disconnect, or capability mismatch fail closed. A "control this tab" turn
-  must never jump to an unrelated local/cloud browser backend.
+- **Other callers bind on registration.** Outside required API lanes, a
+  server-stamped principal and transport family alone preserve legacy behavior
+  until a controller registers. Registered but ambiguous, disconnected or
+  incapable controllers fail closed.
 
 - **Selected controller ⇒ authoritative.** Once a controller is selected the
   command is dispatched to it and its result returned; the legacy backend
@@ -43,6 +49,29 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _legacy_fallback(
+    action: str, fallback: Callable[[], Any], *, reason: str = "unavailable"
+) -> Any:
+    """Guard every fallback, including import/feature-off fast paths.
+
+    Only the server's session binding decides whether the API lane is required;
+    explicit router identity overrides must not remove that requirement. Do not
+    infer it from broker registrations: reset/detach destroys that evidence.
+    """
+    from gateway.session_context import get_session_env
+
+    if (
+        get_session_env("HERMES_SESSION_PLATFORM", "") == "api_server"
+        and get_session_env("HERMES_BROWSER_CONTROL_SESSION_ID", "")
+    ):
+        try:
+            from gateway.browser_control_broker import ControllerUnavailable
+        except ImportError as exc:
+            raise RuntimeError(f"bound browser controller unavailable for {action}") from exc
+        raise ControllerUnavailable(f"bound browser controller {reason} for {action}")
+    return fallback()
 
 
 def extension_controller_available(action: str) -> bool:
@@ -114,15 +143,15 @@ def route_browser_tool(
         Tool arguments as received from the model. Never mutated.
     fallback:
         The existing backend handler, called exactly once when the feature is
-        off or no server-bound controller identity exists. Must be a
-        zero-argument callable.
+        off or no server-bound controller identity exists, unless this is a
+        required API lane. Must be a zero-argument callable.
     broker:
         Object exposing ``scope_for_session(**identity) -> scope|None``,
         ``select(scope, capability) -> controller|None`` and
         ``dispatch(scope, *, action, arguments, tool_call_id)``. The real
         implementation is ``gateway.browser_control_broker``.
     enabled:
-        Feature flag; false bypasses the broker entirely.
+        Feature flag; false bypasses the broker but cannot release a required lane.
     session_id/task_id:
         Caller session hints forwarded to ``scope_for_session``.
     principal_id/transport_family:
@@ -139,10 +168,10 @@ def route_browser_tool(
     propagated — the legacy backend is never retried after selection.
     """
     if not enabled:
-        return fallback()
+        return _legacy_fallback(action, fallback, reason="disabled")
 
     if not str(principal_id or "").strip() or not str(transport_family or "").strip():
-        return fallback()
+        return _legacy_fallback(action, fallback)
 
     scope = broker.scope_for_session(
         session_id=session_id,
@@ -151,9 +180,9 @@ def route_browser_tool(
         transport_family=transport_family,
     )
     if scope is None:
-        # A stamped identity alone does not make the extension lane
-        # authoritative — authentication happens at transport auth, but the
-        # lane only BINDS when a controller actually registers for it. If no
+        # Outside required API runs, a stamped identity alone does not make the
+        # extension lane authoritative: authentication happens at transport auth,
+        # but the lane only BINDS when a controller actually registers for it. If no
         # controller ever registered, generic callers keep the legacy
         # backend. Once a lane registered (even if the controller is
         # currently offline/ambiguous), fail closed: a "control this tab"
@@ -165,7 +194,7 @@ def route_browser_tool(
             principal_id=principal_id,
             transport_family=transport_family,
         ):
-            return fallback()
+            return _legacy_fallback(action, fallback)
         from gateway.browser_control_broker import ControllerUnavailable
 
         raise ControllerUnavailable(
@@ -225,8 +254,8 @@ def routed_browser_handler(
     Resolves the feature flag and process-local broker lazily so the
     default (feature off) path costs one cached config read and an immediate
     fallback, and so importing ``tools.browser_tool`` never imports the
-    gateway. When the gateway cannot be imported or the feature is off, the
-    legacy handler runs unchanged.
+    gateway. Import failure or feature-off preserves the legacy handler only
+    outside a required API lane.
     """
     try:
         from gateway.browser_control_broker import (
@@ -235,13 +264,13 @@ def routed_browser_handler(
         )
     except Exception as exc:  # pragma: no cover - defensive, gateway always present
         logger.debug(
-            "browser extension router unavailable (%s); using legacy backend",
+            "browser extension router unavailable (%s)",
             exc,
         )
-        return fallback()
+        return _legacy_fallback(action, fallback)
 
     if not browser_control_enabled():
-        return fallback()
+        return _legacy_fallback(action, fallback, reason="disabled")
 
     if tool_call_id is None:
         tool_call_id = current_tool_call_id()
