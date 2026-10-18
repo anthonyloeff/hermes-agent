@@ -2115,15 +2115,23 @@ def _deliver_result(
             mirror_enabled=mirror_enabled, mirror_text=mirror_text, delivery_errors=delivery_errors)
         if t is None:
             continue
+        # Anthony-local (6ba2a5b9bf): first delivery of the day to this profile gets the greeting,
+        # on both lanes; a greeting failure never blocks delivery.
+        target_content = cleaned_delivery_content.strip()
+        try:
+            from agent_daily_greeting import greet_cron_delivery
+            target_content = greet_cron_delivery(t.platform_name, t.chat_id, t.thread_id, target_content, user_cfg)
+        except Exception as greeting_err:
+            logger.warning("Job '%s': Daily greeting failed: %s", job["id"], greeting_err)
         target_errors: list = []
         delivered = t.live_adapter_ready and _deliver_via_live_adapter(
-            t, cleaned_delivery_content, media_files,
+            t, target_content, media_files,
             target_errors=target_errors, delivery_errors=delivery_errors,
             unverified_targets=unverified_targets,
         )
         if not delivered:
             _deliver_standalone(
-                t, cleaned_delivery_content, media_files, target_errors, delivery_errors)
+                t, target_content, media_files, target_errors, delivery_errors)
 
     # Filter-time drops apply to every target; report them once. A run whose every target was
     # suppressed sent nothing, so there is no drop to report.
