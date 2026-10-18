@@ -55,8 +55,8 @@ def make_clarify_callback(self, run_id: str, put_event: Callable[[dict], None]) 
         question = str(entry.get("question") or "")[:4000]
         choices = [str(c)[:500] for c in (entry.get("choices") or [])][:_MAX_CHOICES]
         multi = bool(entry.get("multi_select")) and bool(choices)
-        clarify_mod.register(clarify_id=clarify_id, session_key=run_id, question=question,
-                             choices=choices or None, multi_select=multi)
+        registered = clarify_mod.register(clarify_id=clarify_id, session_key=run_id, question=question,
+                                          choices=choices or None, multi_select=multi)
         pending.add(clarify_id)
         self._set_run_status(run_id, "waiting_for_clarify", last_event="clarify.request",
                              clarify_id=clarify_id)
@@ -70,6 +70,10 @@ def make_clarify_callback(self, run_id: str, put_event: Callable[[dict], None]) 
             return None, False
         try:
             response = clarify_mod.wait_for_response(clarify_id, _resolve_timeout())
+            # A stop/retire between register and wait already popped the entry: the waiter
+            # sees "unknown id" (None), but the entry itself carries the CANCELLED verdict.
+            if response is None and registered.event.is_set():
+                response = registered.response
         finally:
             pending.discard(clarify_id)
             if self._run_statuses.get(run_id, {}).get("status") == "waiting_for_clarify":
