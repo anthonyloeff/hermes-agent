@@ -1516,10 +1516,15 @@ def _is_verification_artifact_cleanup(command: str) -> bool:
     if len(argv) != 3 or argv[0] != "rm" or argv[1] != "-f":
         return False
     operand = argv[2]
-    temp_dir = os.path.realpath(tempfile.gettempdir())
+    raw_temp_dir = os.path.abspath(tempfile.gettempdir())
+    temp_dir = os.path.realpath(raw_temp_dir)
     basename = os.path.basename(operand)
+    # macOS: /tmp is a symlink to /private/tmp; accept the literal /tmp spelling too.
+    allowed_operand_dirs = {temp_dir}
+    if raw_temp_dir == "/tmp" and os.path.realpath("/tmp") == temp_dir:
+        allowed_operand_dirs.add(raw_temp_dir)
     return (
-        operand == os.path.join(temp_dir, basename)
+        any(operand == os.path.join(d, basename) for d in allowed_operand_dirs)
         and os.path.dirname(os.path.realpath(operand)) == temp_dir
         and re.fullmatch(r"hermes-(?:verify|ad-hoc)-[A-Za-z0-9_.-]+", basename) is not None
     )
