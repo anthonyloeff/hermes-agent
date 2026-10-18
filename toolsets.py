@@ -194,9 +194,9 @@ TOOLSETS = {
         [t for t in _CODING_TOOLS if t != "clarify"],
     ),
     "hermes-api-server": _ts(
-        "OpenAI-compatible API server — full agent tools accessible via HTTP (no "
-        "interactive UI tools like clarify or send_message)",
-        _core_without("text_to_speech", "clarify", "computer_use", kanban=False),
+        "OpenAI-compatible API server: full agent tools via HTTP, including Runs-based "
+        "clarify interactions (no send_message)",
+        _core_without("text_to_speech", "computer_use", kanban=False),
     ),
     "hermes-cli": _bundle("Full interactive CLI toolset - all default tools plus cronjob management"),
 

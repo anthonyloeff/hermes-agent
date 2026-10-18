@@ -30,6 +30,8 @@ from gateway.platforms.api_server_run_idempotency import TERMINAL_STATUSES
 
 logger = logging.getLogger("gateway.platforms.api_server")
 
+from gateway.platforms import api_server_run_clarify as _run_clarify  # Anthony-local Runs clarify
+
 # Executor-thread lifetime for API-server agent turns (#116535). The handler-side
 # ``_inflight_agent_runs`` count in api_server.py drops in the handler's ``finally`` when the
 # handler task is cancelled (disconnect/shutdown) while the executor thread behind
@@ -229,6 +231,7 @@ def _initialize_run_state(self, *, store_factory) -> None:
         self._run_owners, self._run_streams, self._run_streams_created, self._active_run_agents,
         self._active_run_tasks, self._run_statuses, self._run_approval_sessions,
     ) = ({} for _ in range(7))
+    _run_clarify.initialize(self)
 
 
 def _http_routes(self) -> list[tuple[str, str, Any]]:
@@ -236,6 +239,7 @@ def _http_routes(self) -> list[tuple[str, str, Any]]:
         ("POST", "/v1/runs", self._handle_runs), ("GET", "/v1/runs/{run_id}", self._handle_get_run),
         ("GET", "/v1/runs/{run_id}/events", self._handle_run_events),
         ("POST", "/v1/runs/{run_id}/approval", self._handle_run_approval),
+        ("POST", "/v1/runs/{run_id}/clarify", self._handle_run_clarify),
         ("POST", "/v1/runs/{run_id}/steer", self._handle_steer_run),
         ("POST", "/v1/runs/{run_id}/stop", self._handle_stop_run)]
 
@@ -269,6 +273,8 @@ def _set_run_status(self, run_id: str, status: str, **fields: Any) -> dict[str, 
         current.setdefault("shutdown_requested_at", shutdown_requested_at)
     if status != "waiting_for_approval":
         current.pop("approval", None)
+    if status != "waiting_for_clarify":
+        current.pop("clarify_id", None)
     self._run_statuses[run_id] = current
     should_persist = (
         status != previous_status
@@ -522,6 +528,7 @@ def _forget_run(self, run_id: str, *tables) -> None:
 
 def _retire_live_run(self, run_id: str) -> None:
     """Retire agent/task/approval control state once the executor-backed task is done."""
+    _run_clarify.forget(self, run_id)
     _forget_run(self, run_id, self._active_run_agents, self._active_run_tasks, self._run_approval_sessions,
                 self._stopping_run_ids, self._shutdown_interrupted_run_ids)
 
@@ -962,6 +969,8 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
                 stream_delta_callback=_text_cb, tool_progress_callback=self._make_run_event_callback(run_id, loop),
                 interim_assistant_callback=_interim_cb, **run.agent_kwargs)
         self._active_run_agents[run_id] = agent
+        agent.clarify_callback = _run_clarify.make_clarify_callback(
+            self, run_id, lambda event: loop.call_soon_threadsafe(run.put_event, event))
         approval_notify = _make_approval_notify(self, run, _api_server=_api_server)
         result, usage, served_runtime = await _submit_api_worker(
             loop, lambda: _run_agent_sync(self, run, agent, approval_notify, _api_server=_api_server))

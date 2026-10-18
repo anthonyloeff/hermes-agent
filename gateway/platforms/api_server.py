@@ -4407,6 +4407,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     _handle_get_run = _run_route_delegate("_handle_get_run")
     _handle_run_events = _run_route_delegate("_handle_run_events")
     _handle_run_approval = _run_route_delegate("_handle_run_approval")
+
+    async def _handle_run_clarify(self, request: web.Request) -> web.Response:
+        from gateway.platforms import api_server_run_clarify as _run_clarify
+        return await _run_clarify.handle_run_clarify(self, request, _api_server=sys.modules[__name__])
     _handle_steer_run = _run_route_delegate("_handle_steer_run")
     _handle_stop_run = _run_route_delegate("_handle_stop_run")
 
