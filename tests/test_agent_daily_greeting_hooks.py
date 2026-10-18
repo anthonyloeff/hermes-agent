@@ -6,16 +6,17 @@ and cron deliveries share one once-per-day state, and the gateway hook never rai
 
 from types import SimpleNamespace
 
-import yaml
-
 import agent_daily_greeting as greeting
 from gateway.platforms import base
 
 
-def _write_config(home, **extra):
-    cfg = {"daily_greeting": {"enabled": True, "recipient_name": "Anthony",
-                              "timezone": "Europe/Amsterdam", "scope": "profile", **extra}}
-    (home / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+def _write_config(home, enabled=True):
+    (home / "config.yaml").write_text(
+        "daily_greeting:\n"
+        f"  enabled: {'true' if enabled else 'false'}\n"
+        "  recipient_name: Anthony\n"
+        "  timezone: Europe/Amsterdam\n"
+        "  scope: profile\n", encoding="utf-8")
 
 
 def _home(monkeypatch, tmp_path):
