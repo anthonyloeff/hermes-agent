@@ -1309,7 +1309,7 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
 # Registry
 # ---------------------------------------------------------------------------
 from tools.registry import registry, tool_error
-from tools.browser_extension_router import extension_controller_available, routed_browser_handler
+from tools.browser_extension_router import extension_controller_available, registry_session_id, routed_browser_handler
 
 _BROWSER_SCHEMA_MAP = {s["name"]: s for s in BROWSER_TOOL_SCHEMAS}
 
@@ -1360,7 +1360,7 @@ def _routed_handler(name: str, fallback):
     def handler(args, **kw):
         return record_browser_call(lambda legacy: routed_browser_handler(
             name, args, fallback=lambda: legacy(lambda: fallback(args, kw)),
-            task_id=kw.get("task_id"), session_id=kw.get("session_id"),
+            task_id=kw.get("task_id"), session_id=registry_session_id(kw),
         ), _cloud.browser_backend_name)
     return handler
 

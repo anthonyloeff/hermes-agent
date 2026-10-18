@@ -4119,11 +4119,18 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         ``profile`` is the ``/p/<profile>/`` prefix serving the request (``""`` = default). It must
         reach ``HERMES_SESSION_PROFILE``: the persistent-Docker container key is derived from it, so an
         unbound profile collapses every profile's turns onto the default sandbox (#96370)."""
+        from gateway.browser_control_broker import browser_control_enabled
         from gateway.session_context import set_session_vars
+        # Anthony-local (771e273824/86a39d4361): capture the browser-controller lane at run entry from the
+        # request's session id, independent of compression rotation and of the broker's volatile
+        # registrations. Once bound, a broker reset or later flag flip must not send this run to an
+        # unrelated browser. Runs started with extension control off stay on the legacy backend.
+        browser_session_id = session_id if browser_control_enabled() else ""
         return set_session_vars(
             platform="api_server", chat_id=chat_id, session_key=session_key, session_id=session_id,
             profile=profile, browser_control_principal=browser_control_principal,
             browser_control_transport_family=browser_control_transport_family,
+            browser_control_session_id=browser_session_id,
             async_delivery=False, cron_session="", session_history_delivery=session_history_delivery)
 
     def _turn_runtime_metadata(

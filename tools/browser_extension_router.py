@@ -27,14 +27,45 @@ logger = logging.getLogger(__name__)
 
 
 def _bound_identity() -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """(session_id, principal_id, transport_family) from the session context."""
+    """(session_id, principal_id, transport_family) from the session context.
+
+    Anthony-local: a bound API browser lane (``HERMES_BROWSER_CONTROL_SESSION_ID``) wins over the
+    transcript ``HERMES_SESSION_ID``, which compression rotates mid-run."""
     from gateway.session_context import get_session_env
 
-    return tuple(  # type: ignore[return-value]
+    session_id = (get_session_env("HERMES_BROWSER_CONTROL_SESSION_ID", "")
+                  or get_session_env("HERMES_SESSION_ID", "") or None)
+    return (session_id, *(  # type: ignore[return-value]
         get_session_env(key, "") or None
-        for key in ("HERMES_SESSION_ID", "HERMES_BROWSER_CONTROL_PRINCIPAL",
-                    "HERMES_BROWSER_CONTROL_TRANSPORT_FAMILY")
-    )
+        for key in ("HERMES_BROWSER_CONTROL_PRINCIPAL", "HERMES_BROWSER_CONTROL_TRANSPORT_FAMILY")
+    ))
+
+
+def registry_session_id(kw: dict[str, Any]) -> Optional[str]:
+    """Session hint for registry handlers: the registry's ``session_id`` kwarg is the agent's
+    mutable transcript id, not an explicit scope override, so a bound API lane wins. Direct
+    :func:`routed_browser_handler` callers keep their explicit overrides."""
+    from gateway.session_context import get_session_env
+
+    return get_session_env("HERMES_BROWSER_CONTROL_SESSION_ID", "") or kw.get("session_id")
+
+
+def _legacy_fallback(action: str, fallback: Callable[[], Any], *, reason: str = "unavailable") -> Any:
+    """Guard every legacy fallback (Anthony-local, 86a39d4361).
+
+    Only the server's session binding decides whether the API lane is required; caller identity
+    overrides cannot remove it, and broker registrations are not consulted because a reset or
+    detach destroys that evidence."""
+    from gateway.session_context import get_session_env
+
+    if (get_session_env("HERMES_SESSION_PLATFORM", "") == "api_server"
+            and get_session_env("HERMES_BROWSER_CONTROL_SESSION_ID", "")):
+        try:
+            from gateway.browser_control_broker import ControllerUnavailable
+        except ImportError as exc:
+            raise RuntimeError(f"bound browser controller unavailable for {action}") from exc
+        raise ControllerUnavailable(f"bound browser controller {reason} for {action}")
+    return fallback()
 
 
 def _controller_unavailable(message: str) -> Exception:
@@ -75,18 +106,20 @@ def route_browser_tool(
     called exactly once when the feature is off or no server-bound identity
     exists; once a controller is selected its result/exception is final.
     """
-    if not enabled or not str(principal_id or "").strip() or not str(transport_family or "").strip():
-        return fallback()
+    if not enabled:
+        return _legacy_fallback(action, fallback, reason="disabled")
+    if not str(principal_id or "").strip() or not str(transport_family or "").strip():
+        return _legacy_fallback(action, fallback)
 
     identity = dict(session_id=session_id, task_id=task_id, principal_id=principal_id, transport_family=transport_family)
     scope = broker.scope_for_session(**identity)
     if scope is None:
         # A stamped identity only becomes authoritative once a controller has
         # registered for the lane; unregistered lanes keep the legacy backend,
-        # registered-but-offline lanes fail closed.
+        # registered-but-offline lanes fail closed. Required API lanes never fall back.
         lane_bound = getattr(broker, "lane_registered", None)
         if callable(lane_bound) and not lane_bound(**identity):
-            return fallback()
+            return _legacy_fallback(action, fallback)
         raise _controller_unavailable(f"bound browser controller unavailable for {action}")
 
     if broker.select(scope, action) is None:
@@ -119,10 +152,10 @@ def routed_browser_handler(
     try:
         from gateway.browser_control_broker import browser_control_enabled, get_browser_control_broker
     except Exception as exc:  # pragma: no cover - defensive, gateway always present
-        logger.debug("browser extension router unavailable (%s); using legacy backend", exc)
-        return fallback()
+        logger.debug("browser extension router unavailable (%s)", exc)
+        return _legacy_fallback(action, fallback)
     if not browser_control_enabled():
-        return fallback()
+        return _legacy_fallback(action, fallback, reason="disabled")
 
     try:
         env_session, env_principal, env_transport = _bound_identity()

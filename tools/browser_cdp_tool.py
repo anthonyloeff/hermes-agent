@@ -14,7 +14,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from tools.registry import registry, tool_error
-from tools.browser_extension_router import routed_browser_handler
+from tools.browser_extension_router import registry_session_id, routed_browser_handler
 
 logger = logging.getLogger(__name__)
 
@@ -403,7 +403,7 @@ registry.register(
             method=args.get("method", ""), params=args.get("params"), target_id=args.get("target_id"),
             frame_id=args.get("frame_id"), timeout=args.get("timeout", 30.0), task_id=kw.get("task_id"),
         ),
-        task_id=kw.get("task_id"), session_id=kw.get("session_id"),
+        task_id=kw.get("task_id"), session_id=registry_session_id(kw),
     ),
     check_fn=_browser_cdp_check,
     emoji="🧪",
