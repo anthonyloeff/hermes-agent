@@ -3319,17 +3319,29 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if await asyncio.to_thread(db.get_session, fork_id):
             return _error_response(f"Session already exists: {fork_id}", 409, code="session_exists")
 
+        # Anthony-local privacy-projected copies (api_server_session_copy.py).
+        from gateway.platforms import api_server_session_copy as _session_copy
+        preserve_source = _coerce_request_bool(body.get("preserve_source"), default=False)
+        projection = str(body.get("projection") or "full").strip().lower()
+        if projection not in _session_copy.PROJECTIONS:
+            return _error_response("Invalid session projection", 400, code="invalid_projection")
+        copy_system_prompt = _coerce_request_bool(body.get("copy_system_prompt"), default=True)
+
         # CLI /branch semantics: create the child, then end the original as branched (child first, so
         # a failed create never leaves the source ended with no fork, #11030).
         # ``_branched_from`` is the durable branch marker (same as CLI /branch): with the child created
         # first, the timestamp fallback in _BRANCH_CHILD_SQL (child.started_at >= parent.ended_at) no
         # longer holds, and an unmarked child would vanish from default session listings.
+        # ``preserve_source`` copies leave the source open (cross-client import, not /branch).
         await asyncio.to_thread(
             db.create_session, fork_id, "api_server", model=source.get("model"),
-            system_prompt=source.get("system_prompt"), parent_session_id=source_id,
-            model_config={"_branched_from": source_id})
-        await asyncio.to_thread(db.end_session, source_id, "branched")
+            system_prompt=source.get("system_prompt") if copy_system_prompt else None,
+            parent_session_id=source_id, model_config={"_branched_from": source_id})
+        if not preserve_source:
+            await asyncio.to_thread(db.end_session, source_id, "branched")
         messages = await asyncio.to_thread(db.get_messages, source_id)
+        if projection == "conversation":
+            messages = _session_copy.project_conversation(messages)
         await asyncio.to_thread(db.replace_messages, fork_id, messages)
         title = body.get("title")
         if title is None:
