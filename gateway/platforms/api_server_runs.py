@@ -841,6 +841,10 @@ def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, *, _api_serve
             # Clear ownership now so a later stop can't reap work this run left running.
             _api_server._clear_turn_process_ownership(agent)
             self._memory_sessions.checkin(agent)
+            # Runs builds a fresh, uncached agent per request: release its LLM clients now or they
+            # leak for the gateway's life. Memory stays parked above; session tool state is kept.
+            with suppress(Exception):
+                agent.release_clients()
             # Declared-conversation binding, same precedence gate as _run_agent.
             if run.declared_selected:
                 self._bind_declared_conversation(
