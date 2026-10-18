@@ -101,10 +101,12 @@ def _platform_name(platform) -> str:
     return str(value or "").lower()
 
 
-def _daily_greeting_final(delivery_adapter, source, text: str) -> str:
-    """Anthony-local (6ba2a5b9bf): first final of the day gets a Dutch greeting; never blocks a send."""
+def _daily_greeting_final(source, text: str) -> str:
+    """Anthony-local (6ba2a5b9bf): first final of the day gets a Dutch greeting; never blocks a send.
+    Keys on the source platform: resolving the delivery adapter here would consume a routing lookup
+    that ``send_final_ledgered`` owns (reconnect detection compares successive lookups)."""
     from agent_daily_greeting import greet_platform_final
-    return greet_platform_final(_platform_name(getattr(delivery_adapter, "platform", None)), source, text)
+    return greet_platform_final(_platform_name(getattr(source, "platform", None)), source, text)
 
 
 def _or_default(thunk, default, exc=(TypeError, ValueError)):
@@ -4414,7 +4416,7 @@ class BasePlatformAdapter(ABC):
         self, event: MessageEvent, session_key: str, text_content: str, metadata: dict[str, Any],
         is_ephemeral_response: bool, ephemeral_ttl: int, record_delivery: Callable) -> None:
         """Normal-lane final: the ledger bracket plus the message-id owner's ephemeral delete."""
-        text_content = _daily_greeting_final(self._final_delivery_adapter(event.source), event.source, text_content)
+        text_content = _daily_greeting_final(event.source, text_content)
         result, delivery_adapter = await self.send_final_ledgered(
             event, session_key, text_content, metadata,
             reply_to=_reply_anchor_for_event(event), is_ephemeral_response=is_ephemeral_response)
