@@ -618,6 +618,9 @@ def _resolve_single_delivery_target(
     origin = _resolve_origin(job)
     if deliver_value == "local":
         return None
+    # Anthony-local: profile-scoped PWA inbox (cron/scheduler_pwa_delivery.py).
+    if _pwa.is_pwa_delivery_token(deliver_value):
+        return _pwa.pwa_target()
     # Must precede the generic platform:chat_id split so the profile name isn't parsed as chat_id.
     bot_chat_profile = parse_bot_chat_deliver_token(deliver_value)
     if bot_chat_profile is not None:
@@ -1018,6 +1021,9 @@ _ROUTING_TOKENS = frozenset({"all"})
 BOT_CHAT_PLATFORM = "bot-chat"
 # Bot Chat is the TUI/Desktop transcript, so its warning policy is display.platforms.tui.
 BOT_CHAT_POLICY_PLATFORM = "tui"
+# Targets delivered in-process without a gateway adapter (no durable gateway queue, no
+# per-platform warning gate).
+_ADAPTERLESS_PLATFORMS = frozenset({BOT_CHAT_PLATFORM, "pwa"})
 
 
 def parse_bot_chat_deliver_token(part: str) -> Optional[str]:
@@ -1992,7 +1998,7 @@ def _deliver_result(
     external_execution = os.environ.get("_HERMES_CRON_EXTERNAL_WORKER", "")
     if (external_execution and adapters is None
             and external_execution == str(job.get("execution_id") or "")
-            and any(target["platform"] != BOT_CHAT_PLATFORM for target in targets)):
+            and any(target["platform"] not in _ADAPTERLESS_PLATFORMS for target in targets)):
         from cron.delivery_queue import enqueue_and_wait
 
         _record_delivery_verification(job, [])
@@ -2080,9 +2086,15 @@ def _deliver_result(
         # A failure notice for a platform that hides warning notifications is a suppressed
         # disposition, not a send; requested (non-failure) results are never gated.
         from gateway.warning_notifications import warning_notifications_enabled
-        if (for_failure and target["platform"] != BOT_CHAT_PLATFORM
+        if (for_failure and target["platform"] not in _ADAPTERLESS_PLATFORMS
                 and not warning_notifications_enabled(target["platform"], user_cfg)):
             suppressed_targets += 1
+            continue
+        # Loopback PWA inbox: direct HTTP POST, no gateway adapter or credentials.
+        if target["platform"] == _pwa.PWA_DELIVERY_PLATFORM:
+            pwa_error = _pwa.deliver_to_pwa(job, content)
+            if pwa_error:
+                delivery_errors.append(pwa_error)
             continue
         # Bot Chat owns admission; never concurrently resume a live owner's transcript.
         if target["platform"] == BOT_CHAT_PLATFORM:
@@ -2128,4 +2140,5 @@ def _deliver_result(
 from cron import scheduler as _sched
 from cron import scheduler_delivery_origin as _origin
 from cron import scheduler_preflight as _preflight
+from cron import scheduler_pwa_delivery as _pwa
 from cron import scheduler_script as _script

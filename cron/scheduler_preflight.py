@@ -254,6 +254,11 @@ def _preflight_check_delivery(job: dict) -> Optional[str]:
             # bot-chat targets deliver via a local subprocess; failures land in last_delivery_error.
             if _delivery.parse_bot_chat_deliver_token(part) is not None:
                 continue
+            # PWA targets POST to this profile's loopback inbox: no gateway adapter/credentials.
+            # Delivery-time validation enforces config, loopback-only URL and the ingest key.
+            from cron.scheduler_pwa_delivery import is_pwa_delivery_token
+            if is_pwa_delivery_token(part):
+                continue
             platform_parts.append(part.split(":", 1)[0].strip())
     if not platform_parts:
         return None
