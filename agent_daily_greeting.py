@@ -17,6 +17,7 @@ _STATE_LOCK = threading.RLock()
 
 _DEFAULT_TZ = "Europe/Amsterdam"
 _DEFAULT_RECIPIENT = "Anthony"
+_NOTICE_PREFIXES = ("\u26a0",)  # "⚠️ Something went wrong ...", "⚠️ Session storage ..."
 _GREETING_RE = re.compile(
     r"^\s*(goedemorgen|goedemiddag|goedenavond|hallo)\b\s*,?\s*anthony[.!,:;]?\s*",
     re.IGNORECASE,
@@ -149,6 +150,9 @@ def maybe_prepend_daily_greeting(
     """
     if not content:
         return content
+    # System notices (gateway failure/warning texts) never open the day and never claim it.
+    if content.lstrip().startswith(_NOTICE_PREFIXES):
+        return content
 
     try:
         enabled, recipient_name, tz_name, scope = _enabled_config(config)
@@ -205,6 +209,55 @@ def greet_platform_final(platform: str, source, text: str) -> str:
     except Exception as exc:
         logger.warning("[%s] Daily greeting failed: %s", platform, exc)
         return text
+
+
+def greet_pwa(text: str, config: dict | None = None) -> str:
+    """PWA lanes (API runs + cron ``pwa:self``): one profile-scoped greeting key, never blocks."""
+    if not text:
+        return text
+    try:
+        if config is None:
+            from hermes_cli.config import load_config_readonly
+            config = load_config_readonly()
+        return maybe_prepend_daily_greeting(text, platform="pwa", chat_id="", config=config)
+    except Exception as exc:
+        logger.warning("[pwa] Daily greeting failed: %s", exc)
+        return text
+
+
+class RunGreetingBuffer:
+    """Holds the first streamed characters of an API run until the opening is known, so a
+    model-authored greeting is detected instead of doubled. Not thread-safe by design: deltas
+    come from one agent thread and ``flush`` runs after that thread finished."""
+
+    _MIN_CHARS = 24
+
+    def __init__(self) -> None:
+        self.done = False
+        self._buf: list[str] = []
+
+    def feed(self, delta: str) -> str:
+        if self.done:
+            return delta
+        self._buf.append(delta)
+        joined = "".join(self._buf)
+        if len(joined.strip()) < self._MIN_CHARS and "\n" not in joined.strip():
+            return ""
+        return self.flush()
+
+    def flush(self) -> str:
+        if self.done:
+            return ""
+        self.done = True
+        joined, self._buf = "".join(self._buf), []
+        return greet_pwa(joined) if joined.strip() else joined
+
+    def greet_output(self, output: str) -> str:
+        """Non-streamed run: greet the final output once."""
+        if self.done or not output:
+            return output
+        self.done = True
+        return greet_pwa(output)
 
 
 def greet_cron_delivery(platform: str, chat_id: str, thread_id, text: str, config: dict | None) -> str:

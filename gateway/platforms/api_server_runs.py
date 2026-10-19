@@ -928,12 +928,18 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
     _redact_api_error_text = _api_server._redact_api_error_text
     run_id, loop = run.run_id, asyncio.get_running_loop()
     _run_started_at = time.perf_counter()
+    from agent_daily_greeting import RunGreetingBuffer
+    _greeting = RunGreetingBuffer()  # Anthony-local: first PWA contact of the day gets the greeting
+
+    def _emit_delta(text: str) -> None:
+        if text and run_id in self._run_streams:
+            with suppress(Exception):
+                loop.call_soon_threadsafe(run.put_event, _run_event(run_id, "message.delta", delta=text))
 
     def _text_cb(delta: Optional[str]) -> None:
-        if delta is None or run_id not in self._run_streams:
+        if run_id not in self._run_streams:
             return
-        with suppress(Exception):
-            loop.call_soon_threadsafe(run.put_event, _run_event(run_id, "message.delta", delta=delta))
+        _emit_delta(_greeting.flush() if delta is None else _greeting.feed(delta))
 
     def _interim_cb(text: str, *, already_streamed: bool = False) -> None:
         # Mid-turn assistant commentary (Codex ``phase="commentary"``, text beside tool calls),
@@ -996,7 +1002,11 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
                 runtime=served_runtime, requested_runtime=requested if any(requested.values()) else None,
                 route_source=("model_routes" if run.agent_kwargs.get("route")
                               else "raw_request" if any(requested.values()) else "global"))
-            _finish(status, fields, output=result.get("final_response", ""), usage=usage, runtime=served_runtime)
+            _emit_delta(_greeting.flush())
+            output = result.get("final_response", "")
+            if not _greeting.done:
+                output = _greeting.greet_output(output)
+            _finish(status, fields, output=output, usage=usage, runtime=served_runtime)
     except asyncio.CancelledError:
         _finish("cancelled")
         raise

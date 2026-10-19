@@ -2092,7 +2092,9 @@ def _deliver_result(
             continue
         # Loopback PWA inbox: direct HTTP POST, no gateway adapter or credentials.
         if target["platform"] == _pwa.PWA_DELIVERY_PLATFORM:
-            pwa_error = _pwa.deliver_to_pwa(job, content)
+            # Anthony-local: PWA cron delivery shares the profile's once-per-day greeting.
+            from agent_daily_greeting import greet_pwa
+            pwa_error = _pwa.deliver_to_pwa(job, greet_pwa(content, user_cfg or None))
             if pwa_error:
                 delivery_errors.append(pwa_error)
             continue
