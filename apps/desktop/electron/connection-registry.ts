@@ -528,10 +528,63 @@ function normalizedSshTarget(route: { host?: unknown; port?: unknown; user?: unk
  * this machine is refused instead of spawned. `default` is `$HERMES_HOME`
  * itself, so it always exists here and is never refused. A per-profile
  * remote override still delegates to the legacy profile route.
+ *
+ * Fail-closed (local patch): while global remote mode is active the forced-local
+ * child is REFUSED unless `allowLocalWithRemote` is set. A forced-local dial runs
+ * `gateway ensure` from this desktop's own install; when that install's Hermes
+ * differs from the remote fleet on the same host it does not recognise the
+ * fleet gateway and spawns a detached duplicate gateway that outlives the app.
+ * Opt in with HERMES_DESKTOP_ALLOW_LOCAL_WITH_REMOTE=1.
  */
+export const LOCAL_DISABLED_WHILE_REMOTE =
+  'This device is disabled while Hermes Desktop is connected to a remote backend. ' +
+  'Set HERMES_DESKTOP_ALLOW_LOCAL_WITH_REMOTE=1 to allow a local backend next to the remote one.'
+
+export function localWithRemoteAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  const raw = String(env.HERMES_DESKTOP_ALLOW_LOCAL_WITH_REMOTE ?? '')
+    .trim()
+    .toLowerCase()
+
+  return raw === '1' || raw === 'true' || raw === 'yes'
+}
+
+/**
+ * Last-line guard for any LOCAL gateway spawn/restart. Returns a refusal message
+ * when global remote mode is active and local-with-remote is not opted in.
+ */
+export function localSpawnRefusal(opts: { allowLocalWithRemote?: boolean; globalRemote?: boolean }): null | string {
+  if (opts.globalRemote && !opts.allowLocalWithRemote) {
+    return LOCAL_DISABLED_WHILE_REMOTE
+  }
+
+  return null
+}
+
+/**
+ * Connections the UI may show. While a local spawn is refused (remote mode,
+ * no opt-in) the app-managed 'local' / "This device" entry is hidden unless it
+ * is somehow the primary. It stays in connections.json (normalizeRegistry
+ * re-adds it); only the renderer-facing lists drop it.
+ */
+export function visibleRegistryConnections<T extends { id: string; kind: string }>(
+  connections: readonly T[],
+  opts: { localRefused: boolean; primary?: null | string }
+): T[] {
+  if (!opts.localRefused) {
+    return [...connections]
+  }
+
+  return connections.filter(connection => connection.kind !== 'local' || connection.id === opts.primary)
+}
+
 export function resolveRegistryLocalRoute(
   profile: null | string | undefined,
-  opts: { globalRemote?: boolean; localProfileExists?: boolean; profileRemoteOverride?: boolean } = {}
+  opts: {
+    allowLocalWithRemote?: boolean
+    globalRemote?: boolean
+    localProfileExists?: boolean
+    profileRemoteOverride?: boolean
+  } = {}
 ): RegistryLocalRoute {
   const raw = String(profile ?? '').trim()
   const profileKey = raw || 'default'
@@ -549,6 +602,10 @@ export function resolveRegistryLocalRoute(
 
   if (opts.globalRemote) {
     const poolKey = `${backendScopePrefix(LOCAL_CONNECTION_ID)}${profileKey}`
+
+    if (!opts.allowLocalWithRemote) {
+      return { delegate: false, poolKey, refuse: LOCAL_DISABLED_WHILE_REMOTE }
+    }
 
     // A concrete named profile that does not exist on this machine is
     // remote-only. Spawning it locally is the #90477 loop, so refuse. An

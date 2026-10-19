@@ -774,7 +774,7 @@ test('registry local route: v1 REMOTE global mode forces a genuinely-local backe
   // the registry primary. If 'local' delegated to the v1 route here, the
   // roster's "This device" rows would enumerate + dial the REMOTE primary —
   // every profile duplicated and local agents talking to the remote box.
-  const route = resolveRegistryLocalRoute('default', { globalRemote: true })
+  const route = resolveRegistryLocalRoute('default', { allowLocalWithRemote: true, globalRemote: true })
 
   assert.equal(route.delegate, false)
   // The forced-local child must NOT pool under the bare profile key: that
@@ -808,19 +808,19 @@ test('registry local route: a concrete remote-only profile is refused on the for
   // globalRemote still force-locals a profile that exists on this machine
   // (This device must not dial the remote). A named profile that exists only
   // on the remote must not spawn a local child.
-  const named = resolveRegistryLocalRoute('inbox', { globalRemote: true, localProfileExists: false })
+  const named = resolveRegistryLocalRoute('inbox', { allowLocalWithRemote: true, globalRemote: true, localProfileExists: false })
 
   assert.match(String(named.refuse ?? ''), /Profile "inbox" no longer exists/)
   assert.equal(named.delegate, false)
 
   // default is $HERMES_HOME, not profiles/default: a profiles/default probe
   // reports absent, but This device -> default must still open locally.
-  assert.deepEqual(resolveRegistryLocalRoute('default', { globalRemote: true, localProfileExists: false }), {
+  assert.deepEqual(resolveRegistryLocalRoute('default', { allowLocalWithRemote: true, globalRemote: true, localProfileExists: false }), {
     delegate: false,
     poolKey: 'conn:local::default'
   })
 
-  const present = resolveRegistryLocalRoute('research', { globalRemote: true, localProfileExists: true })
+  const present = resolveRegistryLocalRoute('research', { allowLocalWithRemote: true, globalRemote: true, localProfileExists: true })
 
   assert.equal(present.refuse, undefined)
   assert.equal(present.delegate, false)
@@ -836,8 +836,8 @@ test('registry local route: a concrete remote-only profile is refused on the for
     }),
     { delegate: true, poolKey: 'research' }
   )
-  assert.equal(resolveRegistryLocalRoute(null, { globalRemote: true, localProfileExists: false }).refuse, undefined)
-  assert.equal(resolveRegistryLocalRoute('', { globalRemote: true, localProfileExists: false }).refuse, undefined)
+  assert.equal(resolveRegistryLocalRoute(null, { allowLocalWithRemote: true, globalRemote: true, localProfileExists: false }).refuse, undefined)
+  assert.equal(resolveRegistryLocalRoute('', { allowLocalWithRemote: true, globalRemote: true, localProfileExists: false }).refuse, undefined)
 })
 
 test('registry dial: an empty connection id is not registry.primary', () => {
@@ -863,7 +863,7 @@ test('local enumeration: forced-local route defers until a local child exists (r
   // Remote-gateway-only desktops: enumerating "This device" here would SPAWN
   // a local backend the user never asked for — a phantom `default` agent
   // that duplicates their real one and forces -device handles onto it.
-  const route = resolveRegistryLocalRoute('default', { globalRemote: true })
+  const route = resolveRegistryLocalRoute('default', { allowLocalWithRemote: true, globalRemote: true })
 
   assert.equal(shouldDeferLocalEnumeration(route, []), true)
   // The v1 remote descriptor cached at the BARE profile key is not a local child.

@@ -189,6 +189,8 @@ import {
   buildAgentRoster,
   connectionDialFieldsChanged,
   connectionIdForPendingLogin,
+  localSpawnRefusal,
+  localWithRemoteAllowed,
   mergeConnectionInput,
   migrateV1ToRegistry,
   normalizeConnectionInput,
@@ -211,7 +213,8 @@ import {
   shouldDeferLocalEnumeration,
   shouldRetrySshInventory,
   updateEligibility,
-  upsertConnection
+  upsertConnection,
+  visibleRegistryConnections
 } from './connection-registry'
 import type { RegistryConnection } from './connection-registry'
 import type { RosterProfileMetadata } from './connection-registry'
@@ -8929,7 +8932,10 @@ function sanitizeConnectionsRegistry(registry = readDesktopConnectionsRegistry()
     launchMode: registry.launchMode,
     lastUsed: registry.lastUsed,
     secureTokenStorage,
-    connections: registry.connections.map(sanitizeRegistryConnection),
+    connections: visibleRegistryConnections(registry.connections, {
+      localRefused: localSpawnRefusedNow(),
+      primary: registry.primary
+    }).map(sanitizeRegistryConnection),
     // Surface quarantined-entry NOTICES only (reason + best-effort label) —
     // the raw entries can carry token envelopes and stay in the file (#94246).
     quarantined: (registry.quarantined || []).map(q => ({
@@ -10366,6 +10372,12 @@ function configuredRemoteProfileNames() {
   return Object.keys(config.profiles || {}).filter(name => profileHasRemoteConnection(config, name))
 }
 
+// Fail-closed local patch: true while global remote mode is active and the
+// user has not opted in to a local backend next to it.
+function localSpawnRefusedNow() {
+  return Boolean(localSpawnRefusal({ allowLocalWithRemote: localWithRemoteAllowed(), globalRemote: globalRemoteActive() }))
+}
+
 // True when the app is in app-global remote mode (Settings → "All profiles" →
 // Remote/Cloud, or the env override): a SINGLE remote backend serves every
 // profile via ?profile=. Cloud counts — it resolves to a remote backend (Q6).
@@ -10813,6 +10825,7 @@ async function forgetRegistryLocalGatewayDescriptor(connectionId, profile) {
   const profileKey = String(profile ?? '').trim() || 'default'
 
   const localRoute = resolveRegistryLocalRoute(profileKey, {
+    allowLocalWithRemote: localWithRemoteAllowed(),
     globalRemote: globalRemoteActive(),
     profileRemoteOverride: Boolean(profileHasRemoteOverride(profileKey))
   })
@@ -11004,6 +11017,7 @@ async function ensureRegistryBackend(
     // Pass the raw profile, not profileKey: profileKey collapses null to
     // 'default' and would refuse an unprofiled enumeration as a concrete dial.
     const localRoute = resolveRegistryLocalRoute(rawProfile || null, {
+      allowLocalWithRemote: localWithRemoteAllowed(),
       globalRemote: globalRemoteActive(),
       profileRemoteOverride: Boolean(profileHasRemoteOverride(profileKey)),
       ...(rawProfile ? { localProfileExists } : {})
@@ -11754,6 +11768,18 @@ async function dialPoolBackend(profile, entry, opts: { forceLocal?: boolean; poo
     }
   }
 
+  // Fail-closed local patch: never spawn a local gateway while global remote
+  // mode is active (covers every route that reaches here without a remote).
+  const localRefusal = localSpawnRefusal({
+    allowLocalWithRemote: localWithRemoteAllowed(),
+    globalRemote: globalRemoteActive()
+  })
+
+  if (localRefusal) {
+    rememberLog(`[gateway] refused local backend for profile "${profile}" (remote mode active)`)
+    throw new Error(localRefusal)
+  }
+
   assertLocalProfileCanStart(profile, profileDeletionGate, key =>
     directoryExists(path.join(HERMES_HOME, 'profiles', key))
   )
@@ -11808,6 +11834,19 @@ const GATEWAY_RESTART_CLIENT_TIMEOUT_MS = 120_000
 // that owns the gateway process. A non-zero exit is logged, not thrown: the re-ensure that
 // follows reports what actually answers.
 async function restartLocalGatewayOwner(ownerProfile: string): Promise<void> {
+  // Fail-closed local patch: in remote mode a "local" gateway on this host is
+  // the fleet's, not Desktop's; never restart it from here.
+  const localRefusal = localSpawnRefusal({
+    allowLocalWithRemote: localWithRemoteAllowed(),
+    globalRemote: globalRemoteActive()
+  })
+
+  if (localRefusal) {
+    rememberLog(`[gateway] refused local gateway restart for "${ownerProfile}" (remote mode active)`)
+
+    return
+  }
+
   const backend = await ensureRuntime(
     await resolveHermesBackend(['--profile', ownerProfile, 'gateway', 'restart']),
     () => undefined
@@ -15201,6 +15240,16 @@ async function probeSshProfileInventory(connection) {
 }
 
 async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRegistry()) {
+  // Fail-closed local patch: a refused "This device" entry is not a roster
+  // source at all, so the rail never shows (or dials) it in remote mode.
+  registry = {
+    ...registry,
+    connections: visibleRegistryConnections(registry.connections, {
+      localRefused: localSpawnRefusedNow(),
+      primary: registry.primary
+    })
+  }
+
   // One dead source must not wedge the whole roster: ensureRegistryBackend on
   // an unreachable remote can block up to the 45s readiness timeout, and the
   // Bot Mode poll runs every 5s — each poll queued behind the dead dial, so
@@ -15265,9 +15314,17 @@ async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRe
             // opened one).
             if (connection.kind === 'local') {
               const localRoute = resolveRegistryLocalRoute('default', {
+                allowLocalWithRemote: localWithRemoteAllowed(),
                 globalRemote: globalRemoteActive(),
                 profileRemoteOverride: Boolean(profileHasRemoteOverride(primaryProfileKey()))
               })
+
+              // Fail-closed local patch: a refused local entry is listed as an
+              // empty, reachable source so the roster shows no "This device"
+              // agents and never dials it.
+              if (localRoute.refuse) {
+                return { connection, profiles: [] }
+              }
 
               if (shouldDeferLocalEnumeration(localRoute, backendPool.keys(), connection.id)) {
                 return { connection, profiles: null, error: 'connect-on-demand' }
